@@ -1,3 +1,5 @@
+import time
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import os
@@ -10,6 +12,14 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 app = FastAPI(
     title="Consilium API",
     version="0.1.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False, # Must be False when allow_origins is ["*"]
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 class IdeaRequest(BaseModel):
@@ -30,6 +40,7 @@ def load_prompt(filename: str) -> str:
 
 @app.post("/evaluate/council")
 def evaluate_council(request: IdeaRequest):
+    time.sleep(10) # Simulating thorough analysis
     agents = [
         "visionary",
         "product_lead",
