@@ -2,13 +2,12 @@
 
 Consilium is a multi‑agent AI system that simulates founder‑level strategic discussions for evaluating entrepreneurial ideas. Independent, role‑based agents analyze an idea in parallel, and a Chairperson synthesizes their insights into a single, actionable council decision.
 
+Status: Complete and demo-ready (local execution)
 ---
 
 ## Why Consilium
 
 Most idea evaluators provide a single perspective. Consilium mirrors how real startup decisions are made — through multiple specialized viewpoints (product, market, tech, finance, risk, growth) and a final synthesis.
-
-Status: Complete and demo-ready (local execution)
 
 This project demonstrates:
 
