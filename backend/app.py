@@ -27,7 +27,7 @@ app.add_middleware(
 class IdeaRequest(BaseModel):
     idea: str
     provider: Optional[str] = "gemini"
-    model: Optional[str] = "gemini-1.5-flash"
+    model: Optional[str] = "gemini-2.5-flash"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPTS_DIR = os.path.join(BASE_DIR, "..", "prompts")
@@ -49,7 +49,6 @@ def get_client(provider: str):
     if provider == "gemini":
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            # Fallback to general environment GEMINI_API_KEY
             api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise HTTPException(
@@ -59,7 +58,6 @@ def get_client(provider: str):
         base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
         return AsyncOpenAI(base_url=base_url, api_key=api_key)
         
-    # OpenAI Provider
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -97,44 +95,60 @@ async def evaluate_council(request: IdeaRequest):
     client = get_client(provider)
     
     if provider == "gemini":
-        model = request.model or "gemini-1.5-flash"
+        model = request.model or "gemini-2.5-flash"
     elif provider == "openai":
         model = request.model or "gpt-4o-mini"
     else:
         model = request.model or "llama3"
 
-    async def run_agent(agent_key: str):
-        try:
-            prompt = load_prompt(f"{agent_key}.txt")
-            metric = get_score_metric_name(agent_key)
-            prompt += f"\n\nCRITICAL: At the end of your analysis, on a new line, you must output a score representing {metric} of the idea. Use this exact format:\n[SCORE]: X\nWhere X is an integer between 1 and 10."
-            
-            response = await client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": request.idea}
-                ]
-            )
-            analysis = response.choices[0].message.content
-            
-            # Parse the score
-            score_match = re.search(r"\[SCORE\]:\s*(\d+)", analysis)
-            score = 7  # default fallback
-            if score_match:
-                try:
-                    score = int(score_match.group(1))
-                    score = max(1, min(10, score))
-                except ValueError:
-                    pass
-            
-            clean_analysis = re.sub(r"\[SCORE\]:\s*\d+", "", analysis).strip()
-            return agent_key, clean_analysis, score
-        except Exception as e:
-            print(f"Error executing agent {agent_key}: {e}")
-            return agent_key, f"[Error executing agent: {str(e)}]", 5
+    # Concurrency control to respect Gemini free tier limits (5 RPM / concurrent requests)
+    sem = asyncio.Semaphore(2)
 
-    # Execute all agent requests concurrently
+    async def run_agent(agent_key: str):
+        async with sem:
+            try:
+                prompt = load_prompt(f"{agent_key}.txt")
+                metric = get_score_metric_name(agent_key)
+                prompt += f"\n\nCRITICAL: At the end of your analysis, on a new line, you must output a score representing {metric} of the idea. Use this exact format:\n[SCORE]: X\nWhere X is an integer between 1 and 10."
+                
+                # Retry loop with backoff for rate limit (429) errors
+                retries = 4
+                analysis = ""
+                for attempt in range(retries):
+                    try:
+                        response = await client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {"role": "system", "content": prompt},
+                                {"role": "user", "content": request.idea}
+                            ]
+                        )
+                        analysis = response.choices[0].message.content
+                        break
+                    except Exception as api_err:
+                        if ("429" in str(api_err) or "quota" in str(api_err).lower()) and attempt < retries - 1:
+                            # Staggered retry backoff
+                            await asyncio.sleep(6 + attempt * 4)
+                            continue
+                        raise api_err
+
+                # Parse the score
+                score_match = re.search(r"\[SCORE\]:\s*(\d+)", analysis)
+                score = 7  # default fallback
+                if score_match:
+                    try:
+                        score = int(score_match.group(1))
+                        score = max(1, min(10, score))
+                    except ValueError:
+                        pass
+                
+                clean_analysis = re.sub(r"\[SCORE\]:\s*\d+", "", analysis).strip()
+                return agent_key, clean_analysis, score
+            except Exception as e:
+                print(f"Error executing agent {agent_key}: {e}")
+                return agent_key, f"[Error executing agent: {str(e)}]", 5
+
+    # Execute all agent requests concurrently (sem restricts actual API dispatch overlap)
     tasks = [run_agent(agent_key) for agent_key in agents]
     results = await asyncio.gather(*tasks)
 
@@ -168,27 +182,35 @@ async def evaluate_council(request: IdeaRequest):
     Based on the above reports, provide the final council decision.
     """
 
-    try:
-        final_response = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": chairperson_prompt},
-                {"role": "user", "content": final_prompt}
-            ],
-            response_format={"type": "json_object"}
-        )
-        decision_raw = final_response.choices[0].message.content
-        decision = json.loads(decision_raw)
-    except Exception as e:
-        print(f"Error during synthesis: {e}")
-        # Fallback dictionary in case JSON parsing fails
-        decision = {
-            "verdict": "Cautious Go",
-            "confidence": "Medium",
-            "strengths": ["Unbiased domain inputs", "Clear problem space identified"],
-            "risks": [f"Synthesis parsing issue: {str(e)}", "Please check advisor logs below for details"],
-            "action_items": ["Review individual advisor feedback tabs to extract recommendations"]
-        }
+    # Retry loop for chairperson synthesis
+    decision = None
+    retries_chair = 4
+    for attempt in range(retries_chair):
+        try:
+            final_response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": chairperson_prompt},
+                    {"role": "user", "content": final_prompt}
+                ],
+                response_format={"type": "json_object"}
+            )
+            decision_raw = final_response.choices[0].message.content
+            decision = json.loads(decision_raw)
+            break
+        except Exception as e:
+            if ("429" in str(e) or "quota" in str(e).lower()) and attempt < retries_chair - 1:
+                await asyncio.sleep(8 + attempt * 5)
+                continue
+            print(f"Error during synthesis: {e}")
+            decision = {
+                "verdict": "Cautious Go",
+                "confidence": "Medium",
+                "strengths": ["Unbiased domain inputs", "Clear problem space identified"],
+                "risks": [f"Synthesis parsing issue: {str(e)}", "Please check advisor logs below for details"],
+                "action_items": ["Review individual advisor feedback tabs to extract recommendations"]
+            }
+            break
 
     return {
         "council_decision": decision,
@@ -207,7 +229,7 @@ async def evaluate_agent(agent_key: str, request: IdeaRequest):
     client = get_client(provider)
     
     if provider == "gemini":
-        model = request.model or "gemini-1.5-flash"
+        model = request.model or "gemini-2.5-flash"
     elif provider == "openai":
         model = request.model or "gpt-4o-mini"
     else:
