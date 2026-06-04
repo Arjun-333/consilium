@@ -11,6 +11,45 @@ const agentsList = [
   { key: "strategy_growth", name: "Strategy & Growth", role: "Growth Advisor", description: "GTM execution, growth channels, scaling framework" },
 ];
 
+// Custom Select Dropdown to replace native HTML select
+function CustomSelect({ value, onChange, options, disabled }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const selectedOption = options.find((opt) => opt.value === value) || options[0];
+
+  return (
+    <div className="custom-select-container">
+      <button
+        type="button"
+        className={`custom-select-trigger ${isOpen ? "open" : ""}`}
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        disabled={disabled}
+      >
+        <span>{selectedOption ? selectedOption.label : value}</span>
+        <span className="arrow">▼</span>
+      </button>
+      {isOpen && (
+        <>
+          <div className="custom-select-overlay" onClick={() => setIsOpen(false)} />
+          <ul className="custom-select-options">
+            {options.map((opt) => (
+              <li
+                key={opt.value}
+                className={`custom-select-option ${opt.value === value ? "selected" : ""}`}
+                onClick={() => {
+                  onChange(opt.value);
+                  setIsOpen(false);
+                }}
+              >
+                {opt.label}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
 // SVG Radar Chart mimicking the holographic glowing portal ring in the reference image
 function RadarChart({ scores }) {
   const axes = [
@@ -480,29 +519,29 @@ ${structured.finance}
                 <div className="settings-bar">
                   <div className="setting-group">
                     <label className="setting-label">LLM Provider</label>
-                    <select
+                    <CustomSelect
                       value={provider}
-                      onChange={(e) => setProvider(e.target.value)}
+                      onChange={setProvider}
+                      options={[
+                        { value: "openai", label: "OpenAI (Cloud)" },
+                        { value: "ollama", label: "Ollama (Local)" }
+                      ]}
                       disabled={loading}
-                      className="setting-select"
-                    >
-                      <option value="openai">OpenAI (Cloud)</option>
-                      <option value="ollama">Ollama (Local)</option>
-                    </select>
+                    />
                   </div>
 
                   <div className="setting-group">
                     <label className="setting-label">Model Target</label>
                     {provider === "openai" ? (
-                      <select
+                      <CustomSelect
                         value={model}
-                        onChange={(e) => setModel(e.target.value)}
+                        onChange={setModel}
+                        options={[
+                          { value: "gpt-4o-mini", label: "gpt-4o-mini (Recommended)" },
+                          { value: "gpt-4o", label: "gpt-4o (Advanced)" }
+                        ]}
                         disabled={loading}
-                        className="setting-select"
-                      >
-                        <option value="gpt-4o-mini">gpt-4o-mini (Recommended)</option>
-                        <option value="gpt-4o">gpt-4o (Advanced)</option>
-                      </select>
+                      />
                     ) : (
                       <input
                         type="text"
