@@ -26,8 +26,8 @@ app.add_middleware(
 
 class IdeaRequest(BaseModel):
     idea: str
-    provider: Optional[str] = "openai"
-    model: Optional[str] = "gpt-4o-mini"
+    provider: Optional[str] = "gemini"
+    model: Optional[str] = "gemini-1.5-flash"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPTS_DIR = os.path.join(BASE_DIR, "..", "prompts")
@@ -46,6 +46,20 @@ def get_client(provider: str):
         base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
         return AsyncOpenAI(base_url=base_url, api_key="ollama")
     
+    if provider == "gemini":
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            # Fallback to general environment GEMINI_API_KEY
+            api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise HTTPException(
+                status_code=400, 
+                detail="GEMINI_API_KEY is missing from environment. Set it in your backend/.env file, or switch to 'ollama' to run locally."
+            )
+        base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+        return AsyncOpenAI(base_url=base_url, api_key=api_key)
+        
+    # OpenAI Provider
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -79,9 +93,15 @@ async def evaluate_council(request: IdeaRequest):
         "strategy_growth"
     ]
 
-    provider = request.provider or "openai"
+    provider = request.provider or "gemini"
     client = get_client(provider)
-    model = request.model or ("gpt-4o-mini" if provider == "openai" else "llama3")
+    
+    if provider == "gemini":
+        model = request.model or "gemini-1.5-flash"
+    elif provider == "openai":
+        model = request.model or "gpt-4o-mini"
+    else:
+        model = request.model or "llama3"
 
     async def run_agent(agent_key: str):
         try:
@@ -183,9 +203,15 @@ async def evaluate_agent(agent_key: str, request: IdeaRequest):
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    provider = request.provider or "openai"
+    provider = request.provider or "gemini"
     client = get_client(provider)
-    model = request.model or ("gpt-4o-mini" if provider == "openai" else "llama3")
+    
+    if provider == "gemini":
+        model = request.model or "gemini-1.5-flash"
+    elif provider == "openai":
+        model = request.model or "gpt-4o-mini"
+    else:
+        model = request.model or "llama3"
 
     try:
         response = await client.chat.completions.create(

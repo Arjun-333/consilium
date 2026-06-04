@@ -208,8 +208,8 @@ export default function App() {
     finance: "",
   });
 
-  const [provider, setProvider] = useState("openai");
-  const [model, setModel] = useState("gpt-4o-mini");
+  const [provider, setProvider] = useState("gemini");
+  const [model, setModel] = useState("gemini-1.5-flash");
   const [loading, setLoading] = useState(false);
   
   // Results
@@ -237,7 +237,9 @@ export default function App() {
 
   // Sync default models when provider changes
   useEffect(() => {
-    if (provider === "openai") {
+    if (provider === "gemini") {
+      setModel("gemini-1.5-flash");
+    } else if (provider === "openai") {
       setModel("gpt-4o-mini");
     } else {
       setModel("llama3");
@@ -357,8 +359,8 @@ ${structured.finance}
     setResult(item.result);
     setAgentAnalyses(item.agentAnalyses);
     setScores(item.scores);
-    setProvider(item.provider || "openai");
-    setModel(item.model || "gpt-4o-mini");
+    setProvider(item.provider || "gemini");
+    setModel(item.model || "gemini-1.5-flash");
     setActiveHistoryId(item.id);
   };
 
@@ -448,7 +450,7 @@ ${structured.finance}
         </div>
         <div className="nav-status">
           <span className={`status-pill ${provider === "ollama" ? "local" : "cloud"}`}>
-            {provider === "ollama" ? "Ollama Local" : "OpenAI Cloud"}
+            {provider === "ollama" ? "Ollama Local" : provider === "gemini" ? "Gemini Cloud" : "OpenAI Cloud"}
           </span>
         </div>
       </header>
@@ -523,6 +525,7 @@ ${structured.finance}
                       value={provider}
                       onChange={setProvider}
                       options={[
+                        { value: "gemini", label: "Gemini (Cloud)" },
                         { value: "openai", label: "OpenAI (Cloud)" },
                         { value: "ollama", label: "Ollama (Local)" }
                       ]}
@@ -532,7 +535,18 @@ ${structured.finance}
 
                   <div className="setting-group">
                     <label className="setting-label">Model Target</label>
-                    {provider === "openai" ? (
+                    {provider === "gemini" ? (
+                      <CustomSelect
+                        value={model}
+                        onChange={setModel}
+                        options={[
+                          { value: "gemini-1.5-flash", label: "gemini-1.5-flash (Recommended)" },
+                          { value: "gemini-1.5-pro", label: "gemini-1.5-pro (Advanced)" },
+                          { value: "gemini-2.5-flash", label: "gemini-2.5-flash (Next-Gen)" }
+                        ]}
+                        disabled={loading}
+                      />
+                    ) : provider === "openai" ? (
                       <CustomSelect
                         value={model}
                         onChange={setModel}
