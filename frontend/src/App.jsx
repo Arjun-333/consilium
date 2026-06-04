@@ -209,7 +209,7 @@ export default function App() {
   });
 
   const [provider, setProvider] = useState("gemini");
-  const [model, setModel] = useState("gemini-1.5-flash");
+  const [model, setModel] = useState("gemini-2.5-flash");
   const [loading, setLoading] = useState(false);
   
   // Results
@@ -238,7 +238,7 @@ export default function App() {
   // Sync default models when provider changes
   useEffect(() => {
     if (provider === "gemini") {
-      setModel("gemini-1.5-flash");
+      setModel("gemini-2.5-flash");
     } else if (provider === "openai") {
       setModel("gpt-4o-mini");
     } else {
@@ -360,7 +360,7 @@ ${structured.finance}
     setAgentAnalyses(item.agentAnalyses);
     setScores(item.scores);
     setProvider(item.provider || "gemini");
-    setModel(item.model || "gemini-1.5-flash");
+    setModel(item.model || "gemini-2.5-flash");
     setActiveHistoryId(item.id);
   };
 
@@ -386,39 +386,60 @@ ${structured.finance}
     return "cautious-go";
   };
 
+  const parseInlineMarkdown = (text) => {
+    if (!text) return "";
+    const parts = text.split(/(\*\*.*?\*\*|\*.*?\*)/g);
+    return parts.map((part, i) => {
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return <strong key={i} style={{ color: "#ffffff", fontWeight: "700" }}>{part.slice(2, -2)}</strong>;
+      }
+      if (part.startsWith("*") && part.endsWith("*")) {
+        return <em key={i} style={{ color: "var(--accent-color)" }}>{part.slice(1, -1)}</em>;
+      }
+      return part;
+    });
+  };
+
   const renderMarkdownContent = (text) => {
     if (!text) return null;
     return text.split("\n").map((line, idx) => {
       const trimmed = line.trim();
       
       if (trimmed.startsWith("###")) {
-        return <h4 key={idx}>{trimmed.replace("###", "")}</h4>;
+        return <h4 key={idx}>{parseInlineMarkdown(trimmed.substring(3).trim())}</h4>;
       }
       if (trimmed.startsWith("##")) {
-        return <h3 key={idx}>{trimmed.replace("##", "")}</h3>;
+        return <h3 key={idx}>{parseInlineMarkdown(trimmed.substring(2).trim())}</h3>;
       }
       if (trimmed.startsWith("#")) {
-        return <h2 key={idx}>{trimmed.replace("#", "")}</h2>;
+        return <h2 key={idx}>{parseInlineMarkdown(trimmed.substring(1).trim())}</h2>;
       }
       if (trimmed.startsWith("-") || trimmed.startsWith("*")) {
-        return <li key={idx} style={{ marginLeft: "10px", listStyleType: "disc" }}>{trimmed.substring(1).trim()}</li>;
+        const content = trimmed.substring(1).trim();
+        return (
+          <li key={idx} style={{ marginLeft: "15px", listStyleType: "disc", marginBottom: "8px" }}>
+            {parseInlineMarkdown(content)}
+          </li>
+        );
       }
       if (/^\d+\./.test(trimmed)) {
+        const dotIndex = trimmed.indexOf(".");
+        const prefix = trimmed.substring(0, dotIndex + 1);
+        const content = trimmed.substring(dotIndex + 1).trim();
         return (
           <p 
             key={idx} 
             style={{ 
-              fontWeight: trimmed.includes("Verdict") || trimmed.includes("Strengths") || trimmed.includes("Risks") || trimmed.includes("Recommendations") ? "600" : "400",
               marginTop: "16px",
               color: "#ffffff"
             }}
           >
-            {trimmed}
+            <strong>{prefix}</strong> {parseInlineMarkdown(content)}
           </p>
         );
       }
       if (!trimmed) return <div key={idx} style={{ height: "8px" }} />;
-      return <p key={idx} style={{ margin: "0 0 10px 0" }}>{trimmed}</p>;
+      return <p key={idx} style={{ margin: "0 0 12px 0" }}>{parseInlineMarkdown(trimmed)}</p>;
     });
   };
 
@@ -540,9 +561,8 @@ ${structured.finance}
                         value={model}
                         onChange={setModel}
                         options={[
-                          { value: "gemini-1.5-flash", label: "gemini-1.5-flash (Recommended)" },
-                          { value: "gemini-1.5-pro", label: "gemini-1.5-pro (Advanced)" },
-                          { value: "gemini-2.5-flash", label: "gemini-2.5-flash (Next-Gen)" }
+                          { value: "gemini-2.5-flash", label: "gemini-2.5-flash (Recommended)" },
+                          { value: "gemini-2.5-pro", label: "gemini-2.5-pro (Advanced)" }
                         ]}
                         disabled={loading}
                       />
@@ -732,7 +752,9 @@ ${structured.finance}
                           </h3>
                           <ul style={{ paddingLeft: "20px", margin: "10px 0" }}>
                             {result.strengths && result.strengths.map((str, idx) => (
-                              <li key={idx} style={{ color: "var(--text-primary)", marginBottom: "8px" }}>{str}</li>
+                              <li key={idx} style={{ color: "var(--text-primary)", marginBottom: "8px" }}>
+                                {parseInlineMarkdown(str)}
+                              </li>
                             ))}
                           </ul>
                         </div>
@@ -743,7 +765,9 @@ ${structured.finance}
                           </h3>
                           <ul style={{ paddingLeft: "20px", margin: "10px 0" }}>
                             {result.risks && result.risks.map((risk, idx) => (
-                              <li key={idx} style={{ color: "var(--text-primary)", marginBottom: "8px" }}>{risk}</li>
+                              <li key={idx} style={{ color: "var(--text-primary)", marginBottom: "8px" }}>
+                                {parseInlineMarkdown(risk)}
+                              </li>
                             ))}
                           </ul>
                         </div>
@@ -754,7 +778,9 @@ ${structured.finance}
                           </h3>
                           <ul style={{ paddingLeft: "20px", margin: "10px 0" }}>
                             {result.action_items && result.action_items.map((item, idx) => (
-                              <li key={idx} style={{ color: "var(--text-primary)", marginBottom: "8px" }}>{item}</li>
+                              <li key={idx} style={{ color: "var(--text-primary)", marginBottom: "8px" }}>
+                                {parseInlineMarkdown(item)}
+                              </li>
                             ))}
                           </ul>
                         </div>
@@ -800,9 +826,10 @@ ${structured.finance}
                               </div>
 
                               <div 
+                                key={activeTab}
                                 className="markdown-content" 
                                 style={{ 
-                                  maxHeight: "450px", 
+                                  maxHeight: "550px", 
                                   overflowY: "auto", 
                                   paddingRight: "8px", 
                                   scrollbarWidth: "thin",
