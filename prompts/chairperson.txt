@@ -12,21 +12,13 @@ Rules:
 - Resolve conflicting viewpoints objectively
 - Prioritize risks that could materially impact success
 
-Produce the final output in the following structure:
+You must respond ONLY with a valid JSON object matching this structure:
+{
+  "verdict": "Go" | "Cautious Go" | "No-Go",
+  "confidence": "Low" | "Medium" | "High",
+  "strengths": ["string", "string", ...],
+  "risks": ["string", "string", ...],
+  "action_items": ["string", "string", ...]
+}
 
-1. Council Verdict
-   (Go / Cautious Go / No-Go)
-
-2. Key Strengths
-   (Summarize the strongest positive signals)
-
-3. Major Risks
-   (Summarize the most critical concerns)
-
-4. Strategic Recommendations
-   (Concrete next steps based on agent consensus)
-
-5. Confidence Level
-   (Low / Medium / High — based on clarity and risk balance)
-
-Be concise, balanced, and founder-oriented.
+Do not add any preamble, conversational text, or code block markers. Return a raw JSON payload.

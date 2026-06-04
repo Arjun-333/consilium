@@ -1,13 +1,15 @@
-import time
+import asyncio
+import re
+import json
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 import os
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = FastAPI(
     title="Consilium API",
@@ -24,6 +26,8 @@ app.add_middleware(
 
 class IdeaRequest(BaseModel):
     idea: str
+    provider: Optional[str] = "openai"
+    model: Optional[str] = "gpt-4o-mini"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPTS_DIR = os.path.join(BASE_DIR, "..", "prompts")
@@ -37,10 +41,34 @@ def load_prompt(filename: str) -> str:
     with open(prompt_path, "r", encoding="utf-8") as file:
         return file.read()
 
+def get_client(provider: str):
+    if provider == "ollama":
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+        return AsyncOpenAI(base_url=base_url, api_key="ollama")
+    
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=400, 
+            detail="OPENAI_API_KEY is missing from environment. Set it in your backend/.env file, or switch to 'ollama' to run locally."
+        )
+    return AsyncOpenAI(api_key=api_key)
+
+def get_score_metric_name(agent_key: str) -> str:
+    metrics = {
+        "visionary": "Vision Alignment",
+        "product_lead": "Product Feasibility",
+        "market_analyst": "Market Opportunity",
+        "technology_lead": "Technical Feasibility",
+        "finance_advisor": "Financial Viability",
+        "risk_compliance": "Execution Safety (10 represents lowest risk/highest safety)",
+        "strategy_growth": "Growth Potential"
+    }
+    return metrics.get(agent_key, "General Alignment")
+
 
 @app.post("/evaluate/council")
-def evaluate_council(request: IdeaRequest):
-    time.sleep(10) # Simulating thorough analysis
+async def evaluate_council(request: IdeaRequest):
     agents = [
         "visionary",
         "product_lead",
@@ -51,30 +79,66 @@ def evaluate_council(request: IdeaRequest):
         "strategy_growth"
     ]
 
-    agent_outputs = []
+    provider = request.provider or "openai"
+    client = get_client(provider)
+    model = request.model or ("gpt-4o-mini" if provider == "openai" else "llama3")
 
-    # 1. Sequential execution of all agents
-    for agent_key in agents:
+    async def run_agent(agent_key: str):
         try:
             prompt = load_prompt(f"{agent_key}.txt")
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
+            metric = get_score_metric_name(agent_key)
+            prompt += f"\n\nCRITICAL: At the end of your analysis, on a new line, you must output a score representing {metric} of the idea. Use this exact format:\n[SCORE]: X\nWhere X is an integer between 1 and 10."
+            
+            response = await client.chat.completions.create(
+                model=model,
                 messages=[
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": request.idea}
                 ]
             )
             analysis = response.choices[0].message.content
-            agent_outputs.append(f"--- {agent_key.replace('_', ' ').title()} ---\n{analysis}\n")
+            
+            # Parse the score
+            score_match = re.search(r"\[SCORE\]:\s*(\d+)", analysis)
+            score = 7  # default fallback
+            if score_match:
+                try:
+                    score = int(score_match.group(1))
+                    score = max(1, min(10, score))
+                except ValueError:
+                    pass
+            
+            clean_analysis = re.sub(r"\[SCORE\]:\s*\d+", "", analysis).strip()
+            return agent_key, clean_analysis, score
         except Exception as e:
             print(f"Error executing agent {agent_key}: {e}")
-            agent_outputs.append(f"--- {agent_key} ---\n[Error executing agent]\n")
+            return agent_key, f"[Error executing agent: {str(e)}]", 5
 
-    # 2. Aggregation
-    aggregated_reports = "\n".join(agent_outputs)
+    # Execute all agent requests concurrently
+    tasks = [run_agent(agent_key) for agent_key in agents]
+    results = await asyncio.gather(*tasks)
 
-    # 3. Chairperson Synthesis
-    chairperson_prompt = load_prompt("chairperson.txt")
+    agent_outputs_dict = {}
+    agent_scores_dict = {}
+    
+    for agent_key, clean_analysis, score in results:
+        agent_outputs_dict[agent_key] = clean_analysis
+        agent_scores_dict[agent_key] = score
+
+    agent_outputs_formatted = []
+    for agent_key in agents:
+        analysis = agent_outputs_dict[agent_key]
+        agent_outputs_formatted.append(f"--- {agent_key.replace('_', ' ').title()} ---\n{analysis}\n")
+
+    # Aggregation
+    aggregated_reports = "\n".join(agent_outputs_formatted)
+
+    # Chairperson Synthesis
+    try:
+        chairperson_prompt = load_prompt("chairperson.txt")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chairperson prompt error: {str(e)}")
+
     final_prompt = f"""
     Original Idea: {request.idea}
 
@@ -84,37 +148,59 @@ def evaluate_council(request: IdeaRequest):
     Based on the above reports, provide the final council decision.
     """
 
-    final_response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": chairperson_prompt},
-            {"role": "user", "content": final_prompt}
-        ]
-    )
+    try:
+        final_response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": chairperson_prompt},
+                {"role": "user", "content": final_prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        decision_raw = final_response.choices[0].message.content
+        decision = json.loads(decision_raw)
+    except Exception as e:
+        print(f"Error during synthesis: {e}")
+        # Fallback dictionary in case JSON parsing fails
+        decision = {
+            "verdict": "Cautious Go",
+            "confidence": "Medium",
+            "strengths": ["Unbiased domain inputs", "Clear problem space identified"],
+            "risks": [f"Synthesis parsing issue: {str(e)}", "Please check advisor logs below for details"],
+            "action_items": ["Review individual advisor feedback tabs to extract recommendations"]
+        }
 
     return {
-        "council_decision": final_response.choices[0].message.content
+        "council_decision": decision,
+        "agent_analyses": agent_outputs_dict,
+        "scores": agent_scores_dict
     }
 
 @app.post("/evaluate/{agent_key}")
-def evaluate_agent(agent_key: str, request: IdeaRequest):
+async def evaluate_agent(agent_key: str, request: IdeaRequest):
     try:
         prompt = load_prompt(f"{agent_key}.txt")
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": request.idea}
-        ]
-    )
+    provider = request.provider or "openai"
+    client = get_client(provider)
+    model = request.model or ("gpt-4o-mini" if provider == "openai" else "llama3")
 
-    return {
-        "agent": agent_key,
-        "analysis": response.choices[0].message.content
-    }
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": request.idea}
+            ]
+        )
+        return {
+            "agent": agent_key,
+            "analysis": response.choices[0].message.content
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
 def health_check():
